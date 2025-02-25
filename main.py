@@ -14,59 +14,76 @@ OVERPASS_URL = "http://overpass-api.de/api/interpreter"
 OSRM_TABLE_URL = "https://routing.openstreetmap.de/routed-foot/table/v1/foot/"
 OSRM_ROUTE_URL = "https://routing.openstreetmap.de/routed-foot/route/v1/foot/"
 
-HEADERS = {"User-Agent": "FastAPI-Geocoding-App/1.0"}
+HEADERS = {"User-Agent": "jija"}
 
 
 def get_coordinates(address):
     """Геокодинг адреса с помощью Nominatim."""
     t.sleep(1)  # Ограничение API Nominatim (1 запрос в секунду)
-    params = {"q": address, "format": "json"}
+    params = {"q": address, "format": "json"} # Параметры запроса
     try:
         response = requests.get(GEOCODER_URL, params=params, headers=HEADERS)
         response.raise_for_status()
         data = response.json()
+        # Возвращаем координаты (широта, долгота), если данные получены
         return (float(data[0]["lat"]), float(data[0]["lon"])) if data else None
     except requests.exceptions.RequestException:
         return None
 
 def build_initial_route(hospital_coords, home_coords):
+    """
+    Построение начального(прямого) маршрута между больницей и домом с использованием OSRM API.
+    """
+    # Формируем строку координат для запроса к OSRM
     route_coords = f"{hospital_coords[1]},{hospital_coords[0]};{home_coords[1]},{home_coords[0]}"
+    # Получаем маршрут через OSRM API
     route_response = requests.get(f"{OSRM_ROUTE_URL}{route_coords}?overview=full&geometries=geojson").json()
 
     if "routes" not in route_response or not route_response["routes"]:
         return None
 
+    # Извлекаем геометрию маршрута и расстояние
     route_geometry = route_response["routes"][0]["geometry"]["coordinates"]
     route_points = [(point[1], point[0]) for point in route_geometry]
     initial_distance = route_response["routes"][0]["distance"]
     return route_points, initial_distance
 
 def find_pharmacies_along_route(route_points):
+    """
+    Поиск аптек вдоль маршрута с использованием Overpass API.
+    """
     pharmacies = []
     for i, point in enumerate(route_points):
         if i % 2 != 0:  # Берем каждую 2-ю точку маршрута
             continue
         print(i)
+        # Формируем запрос для Overpass API
         overpass_query = f"""
         [out:json];
         node["amenity"="pharmacy"](around:500, {point[0]}, {point[1]});
         out;
         """
         try:
+            # Отправляем запрос к Overpass API
             response = requests.get(OVERPASS_URL, params={"data": overpass_query})
             response.raise_for_status()
             data = response.json()
             pharmacies.extend([(node["lat"], node["lon"]) for node in data.get("elements", [])])
         except requests.exceptions.RequestException:
             continue
-
+    
     if not pharmacies:
         return []
-
+    # Удаляем дубликаты аптек и возвращаем результат
     return list(set(pharmacies))
 
 def get_distance_matrix(locations):
+    """
+    Получение матрицы расстояний между точками с использованием OSRM Table API.
+    """
+    # Формируем строку координат для запроса к OSRM
     coords_str = ";".join([f"{lon},{lat}" for lat, lon in locations])
+    # Получаем матрицу расстояний через OSRM
     osrm_response = requests.get(f"{OSRM_TABLE_URL}{coords_str}?sources=all&destinations=all&annotations=distance").json()
 
     if "distances" not in osrm_response:
@@ -75,13 +92,17 @@ def get_distance_matrix(locations):
     return osrm_response["distances"]
 
 def generate_route(locations, path):
+    """
+    Генерация финального маршрута через OSRM Route API.
+    """
     route_coords = ";".join([f"{locations[i][1]},{locations[i][0]}" for i in path])
+    # Получаем маршрут через OSRM Route API
     route_response = requests.get(f"{OSRM_ROUTE_URL}{route_coords}?overview=full&geometries=geojson").json()
 
     return {
-        "geometry": route_response["routes"][0]["geometry"],
-        "distance": route_response["routes"][0]["distance"] / 1000,  # Перевод в км
-        "points": [locations[i] for i in path]
+        "geometry": route_response["routes"][0]["geometry"],        # Геометрия маршрута
+        "distance": route_response["routes"][0]["distance"] / 1000, # Перевод в км
+        "points": [locations[i] for i in path]                      # Список точек маршрута
     }
 
 
