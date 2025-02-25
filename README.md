@@ -15,7 +15,6 @@
 - **APIs**: OpenStreetMap (Nominatim), Overpass API, OSRM
 
 
-```markdown
 ## Установка и запуск
 
 ### 1. Клонирование репозитория
